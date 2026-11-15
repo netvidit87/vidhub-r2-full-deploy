@@ -27,9 +27,31 @@ export default {
       })
     }
 
+    // ===== HEALTH / DEBUG =====
+    if (url.pathname === '/api/health' && request.method === 'GET') {
+      return json({
+        ok: true,
+        hasR2: !!env.R2_BUCKET,
+        time: new Date().toISOString(),
+      })
+    }
+
     // ===== UPLOAD ke R2 =====
     if (url.pathname === '/api/upload' && request.method === 'POST') {
       return handleUpload(request, env, url)
+    }
+
+    // ===== LIST (debug, optional) =====
+    if (url.pathname === '/api/list' && request.method === 'GET') {
+      if (!env.R2_BUCKET) return json({ error: 'no r2' }, 500)
+      const listed = await env.R2_BUCKET.list({ limit: 20 })
+      return json({
+        objects: listed.objects.map((o) => ({
+          key: o.key,
+          size: o.size,
+          uploaded: o.uploaded,
+        })),
+      })
     }
 
     // ===== VIDEO / IMAGE dari R2 =====
@@ -71,7 +93,7 @@ export default {
 async function handleUpload(request, env, url) {
   try {
     if (!env.R2_BUCKET) {
-      return json({ error: 'R2 binding not configured' }, 500)
+      return json({ error: 'R2 binding not configured. Add R2_BUCKET binding to this Worker.' }, 500)
     }
 
     const formData = await request.formData()
@@ -86,17 +108,19 @@ async function handleUpload(request, env, url) {
       return json({ error: 'Only video files allowed' }, 400)
     }
 
-    // max 500MB (bisa disesuaikan)
+    // max 500MB
     if (file.size && file.size > 500 * 1024 * 1024) {
       return json({ error: 'File too large (max 500MB)' }, 400)
     }
 
-    // generate id acak (mirip style videy)
+    // generate id acak
     const id = generateId(10)
     const key = `${id}.mp4`
 
-    // upload ke R2
-    await env.R2_BUCKET.put(key, file.stream(), {
+    // Baca file sebagai ArrayBuffer agar lebih reliable di Worker
+    const buffer = await file.arrayBuffer()
+
+    await env.R2_BUCKET.put(key, buffer, {
       httpMetadata: {
         contentType: file.type || 'video/mp4',
         cacheControl: 'public, max-age=31536000, immutable',
@@ -104,17 +128,24 @@ async function handleUpload(request, env, url) {
       customMetadata: {
         originalName: file.name || 'video.mp4',
         uploadedAt: new Date().toISOString(),
+        size: String(file.size || buffer.byteLength),
       },
     })
 
-    const cdnBase = `https://cdn.vidhub.sbs`
+    // verifikasi langsung
+    const check = await env.R2_BUCKET.head(key)
+    if (!check) {
+      return json({ error: 'Upload succeeded but file not found in R2' }, 502)
+    }
+
     return json({
       id,
-      url: `${cdnBase}/${id}.mp4`,
-      page: `https://vidhub.sbs/v/${id}`, // sesuaikan domain utama kamu
+      url: `https://cdn.vidhub.sbs/${id}.mp4`,
+      page: `https://vidhub.sbs/v/?id=${id}`,
+      size: check.size,
     })
   } catch (err) {
-    return json({ error: err.message || 'Upload error' }, 502)
+    return json({ error: err.message || 'Upload error', stack: String(err) }, 502)
   }
 }
 
@@ -126,12 +157,31 @@ async function serveFromR2(env, key, request, ext) {
     return new Response('R2 not configured', { status: 500 })
   }
 
-  const object = await env.R2_BUCKET.get(key, {
-    range: request.headers.get('Range') || undefined,
-  })
+  const rangeHeader = request.headers.get('Range')
+
+  let object
+  try {
+    if (rangeHeader) {
+      // parse simple bytes=start-end
+      const m = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+      if (m) {
+        const start = parseInt(m[1], 10)
+        const end = m[2] ? parseInt(m[2], 10) : undefined
+        object = await env.R2_BUCKET.get(key, {
+          range: end !== undefined ? { offset: start, length: end - start + 1 } : { offset: start },
+        })
+      } else {
+        object = await env.R2_BUCKET.get(key)
+      }
+    } else {
+      object = await env.R2_BUCKET.get(key)
+    }
+  } catch (e) {
+    return new Response('R2 get error: ' + e.message, { status: 500 })
+  }
 
   if (!object) {
-    return new Response('File not found', { status: 404 })
+    return new Response('File not found in R2: ' + key, { status: 404 })
   }
 
   const headers = new Headers()
@@ -139,6 +189,7 @@ async function serveFromR2(env, key, request, ext) {
   headers.set('etag', object.httpEtag)
   headers.set('Accept-Ranges', 'bytes')
   headers.set('Access-Control-Allow-Origin', '*')
+  headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
   headers.set('Cache-Control', 'public, max-age=31536000, immutable')
 
   // Content-Type fallback
@@ -159,14 +210,21 @@ async function serveFromR2(env, key, request, ext) {
 
   // Range response
   if (object.range) {
+    const offset = object.range.offset || 0
+    const length = object.range.length || object.size
     headers.set(
       'Content-Range',
-      `bytes ${object.range.offset}-${object.range.offset + object.range.length - 1}/${object.size}`
+      `bytes ${offset}-${offset + length - 1}/${object.size}`
     )
+    headers.set('Content-Length', String(length))
     return new Response(object.body, {
       status: 206,
       headers,
     })
+  }
+
+  if (object.size != null) {
+    headers.set('Content-Length', String(object.size))
   }
 
   return new Response(object.body, {
@@ -176,13 +234,12 @@ async function serveFromR2(env, key, request, ext) {
 }
 
 /* ============================================================
-   INTERSTITIAL HTML (mirip yang kamu kirim)
+   INTERSTITIAL HTML
    ============================================================ */
 function serveInterstitial(id, ext, url) {
   const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
   const contentUrl = `${url.origin}/${id}.${ext}`
 
-  // teks iklan random (bisa diganti)
   const adTextsEn = [
     'Click here to unlock more',
     'Get instant access',
@@ -200,7 +257,6 @@ function serveInterstitial(id, ext, url) {
     'Hanya satu klik lagi...',
   ]
 
-  // ganti link iklan di bawah ini sesuai Adsterra / network kamu
   const adLink = 'https://asiaso.org/4/df50998274e1f40d49267336947b0d81'
 
   const html = `<!DOCTYPE html>
@@ -215,10 +271,6 @@ function serveInterstitial(id, ext, url) {
   </style>
 </head>
 <body>
-  <div id="not-found" class="hidden min-h-screen items-center justify-center bg-neutral-950">
-    <h1 class="text-4xl font-bold text-white">404</h1>
-  </div>
-
   <div id="content" class="min-h-screen flex-col items-center justify-center bg-neutral-950 flex">
     <div class="flex w-full max-w-[720px] flex-col">
       ${isVideo

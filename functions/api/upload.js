@@ -51,7 +51,8 @@ export async function onRequestPost({ request }) {
 
     return Response.json({
       id,
-      url: `https://cdn.vidhub.sbs/${id}.mp4`,
+      url: data.url || `https://cdn.vidhub.sbs/${id}.mp4`,
+      page: data.page || `https://vidhub.sbs/v/?id=${id}`,
     })
   } catch (err) {
     return Response.json({ error: 'Proxy error' }, { status: 502 })

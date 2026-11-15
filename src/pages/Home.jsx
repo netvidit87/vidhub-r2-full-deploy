@@ -28,8 +28,8 @@ export default function Home() {
     }
 
     // batas 200MB
-    if (file.size > 200 * 1024 * 1024) {
-      setError('Ukuran maksimal 200MB.')
+    if (file.size > 500 * 1024 * 1024) {
+      setError('Ukuran maksimal 500MB.')
       return
     }
 
@@ -55,7 +55,7 @@ export default function Home() {
           setProgress(100)
           setTimeout(() => {
             setUploading(false)
-            navigate(`/v/${encodeURIComponent(data.id)}`)
+            navigate(`/v/?id=${encodeURIComponent(data.id)}`)
           }, 250)
         } else {
           throw new Error(data.error || `Upload gagal (${xhr.status})`)
