@@ -1,0 +1,13 @@
+name = "vidrush-cdn"
+main = "video-proxy.js"
+compatibility_date = "2026-10-01"
+
+# Binding R2 bucket "vidrush"
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "vidrush"
+
+# Optional: kalau mau pakai custom domain via wrangler (lebih baik set di dashboard)
+# routes = [
+#   { pattern = "cdn.vidhub.sbs/*", zone_name = "vidhub.sbs" }
+# ]
