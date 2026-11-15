@@ -27,22 +27,22 @@ export default {
       })
     }
 
-    // ===== HEALTH / DEBUG =====
-    if (url.pathname === '/api/health' && request.method === 'GET') {
-      return json({
-        ok: true,
-        hasR2: !!env.R2_BUCKET,
-        time: new Date().toISOString(),
-      })
-    }
-
-    // ===== UPLOAD ke R2 =====
-    if (url.pathname === '/api/upload' && request.method === 'POST') {
-      return handleUpload(request, env, url)
-    }
-
-    // ===== LIST (debug, optional) =====
-    if (url.pathname === '/api/list' && request.method === 'GET') {
+    // ===== DEBUG (butuh secret) =====
+    // Contoh: /api/health?key=VIDHUB_SECRET_2026
+    //         /api/list?key=VIDHUB_SECRET_2026
+    const DEBUG_KEY = env.DEBUG_KEY || 'VIDHUB_SECRET_2026'
+    if ((url.pathname === '/api/health' || url.pathname === '/api/list') && request.method === 'GET') {
+      const key = url.searchParams.get('key') || ''
+      if (key !== DEBUG_KEY) {
+        return new Response('Not Found', { status: 404 })
+      }
+      if (url.pathname === '/api/health') {
+        return json({
+          ok: true,
+          hasR2: !!env.R2_BUCKET,
+          time: new Date().toISOString(),
+        })
+      }
       if (!env.R2_BUCKET) return json({ error: 'no r2' }, 500)
       const listed = await env.R2_BUCKET.list({ limit: 20 })
       return json({
@@ -52,6 +52,11 @@ export default {
           uploaded: o.uploaded,
         })),
       })
+    }
+
+    // ===== UPLOAD ke R2 =====
+    if (url.pathname === '/api/upload' && request.method === 'POST') {
+      return handleUpload(request, env, url)
     }
 
     // ===== VIDEO / IMAGE dari R2 =====
@@ -65,16 +70,23 @@ export default {
       const ext = (match[2] || 'mp4').toLowerCase()
       const key = `${id}.${ext}`
 
-      // Cek apakah request ini dari browser (navigasi langsung) atau dari <video>/<img>
-      const accept = request.headers.get('Accept') || ''
+      // Deteksi navigasi browser langsung (bukan request dari <video>/<img>)
+      const accept = (request.headers.get('Accept') || '').toLowerCase()
       const range = request.headers.get('Range')
+      const dest = (request.headers.get('Sec-Fetch-Dest') || '').toLowerCase()
+      const mode = (request.headers.get('Sec-Fetch-Mode') || '').toLowerCase()
+
+      // Browser buka URL langsung biasanya: no Range, dest=document/empty, mode=navigate
+      // <video> biasanya kirim Range atau Accept video/* atau dest=video/empty media
       const isBrowserNav =
         !range &&
-        accept.includes('text/html') &&
-        !accept.includes('video/') &&
-        !accept.includes('image/')
+        (
+          dest === 'document' ||
+          mode === 'navigate' ||
+          (accept.includes('text/html') && !accept.includes('video/') && !accept.includes('image/'))
+        )
 
-      // Kalau browser buka langsung link → tampilkan interstitial HTML
+      // Kalau browser buka langsung link → tampilkan interstitial HTML + smartlink
       if (isBrowserNav && ['mp4', 'webm', 'mov', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'].includes(ext)) {
         return serveInterstitial(id, ext, url)
       }
@@ -145,7 +157,7 @@ async function handleUpload(request, env, url) {
       size: check.size,
     })
   } catch (err) {
-    return json({ error: err.message || 'Upload error', stack: String(err) }, 502)
+    return json({ error: 'Upload failed' }, 502)
   }
 }
 
@@ -154,7 +166,7 @@ async function handleUpload(request, env, url) {
    ============================================================ */
 async function serveFromR2(env, key, request, ext) {
   if (!env.R2_BUCKET) {
-    return new Response('R2 not configured', { status: 500 })
+    return new Response('Error', { status: 500 })
   }
 
   const rangeHeader = request.headers.get('Range')
@@ -177,11 +189,11 @@ async function serveFromR2(env, key, request, ext) {
       object = await env.R2_BUCKET.get(key)
     }
   } catch (e) {
-    return new Response('R2 get error: ' + e.message, { status: 500 })
+    return new Response('Error', { status: 500 })
   }
 
   if (!object) {
-    return new Response('File not found in R2: ' + key, { status: 404 })
+    return new Response('Not Found', { status: 404 })
   }
 
   const headers = new Headers()
