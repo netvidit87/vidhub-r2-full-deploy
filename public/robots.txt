@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Allow: /v/
+Allow: /terms
+Allow: /privacy
+Allow: /report
+Disallow: /api/
+Disallow: /*?*utm_
+Sitemap: https://vidhub.sbs/sitemap.xml

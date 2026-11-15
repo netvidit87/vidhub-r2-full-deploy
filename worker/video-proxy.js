@@ -59,39 +59,38 @@ export default {
       return handleUpload(request, env, url)
     }
 
-    // ===== VIDEO / IMAGE dari R2 =====
-    // Cocok: /xxxx.mp4  atau  /cdn/xxxx.mp4
+    // ===== VIDEO / IMAGE / FILE dari R2 =====
+    // Cocok: /xxxx.mp4  /xxxx.jpg  /cdn/xxxx.mp4  dll
     const match =
-      path.match(/^cdn\/([a-zA-Z0-9_-]+)(?:\.(mp4|webm|mov|jpg|jpeg|png|gif|webp|avif))?$/i) ||
-      path.match(/^([a-zA-Z0-9_-]+)\.(mp4|webm|mov|jpg|jpeg|png|gif|webp|avif)$/i)
+      path.match(/^cdn\/([a-zA-Z0-9_-]+)(?:\.(mp4|webm|mov|m4v|jpg|jpeg|png|gif|webp|avif|bmp))?$/i) ||
+      path.match(/^([a-zA-Z0-9_-]+)\.(mp4|webm|mov|m4v|jpg|jpeg|png|gif|webp|avif|bmp)$/i)
 
     if (match && (request.method === 'GET' || request.method === 'HEAD')) {
       const id = match[1]
       const ext = (match[2] || 'mp4').toLowerCase()
       const key = `${id}.${ext}`
 
-      // Deteksi navigasi browser langsung (bukan request dari <video>/<img>)
-      const accept = (request.headers.get('Accept') || '').toLowerCase()
+      // Force raw file: ?raw=1 atau ?dl=1
+      const forceRaw = url.searchParams.has('raw') || url.searchParams.has('dl')
+
       const range = request.headers.get('Range')
       const dest = (request.headers.get('Sec-Fetch-Dest') || '').toLowerCase()
       const mode = (request.headers.get('Sec-Fetch-Mode') || '').toLowerCase()
+      const accept = (request.headers.get('Accept') || '').toLowerCase()
 
-      // Browser buka URL langsung biasanya: no Range, dest=document/empty, mode=navigate
-      // <video> biasanya kirim Range atau Accept video/* atau dest=video/empty media
-      const isBrowserNav =
-        !range &&
-        (
-          dest === 'document' ||
-          mode === 'navigate' ||
-          (accept.includes('text/html') && !accept.includes('video/') && !accept.includes('image/'))
-        )
+      // Request dari <video>/<img> → stream file
+      // Ciri: ada Range, atau Sec-Fetch-Dest = video/image/audio/embed, atau ?raw=1
+      const isMediaElement =
+        forceRaw ||
+        !!range ||
+        ['video', 'image', 'audio', 'embed', 'object'].includes(dest) ||
+        (mode === 'no-cors' && !accept.includes('text/html'))
 
-      // Kalau browser buka langsung link → tampilkan interstitial HTML + smartlink
-      if (isBrowserNav && ['mp4', 'webm', 'mov', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'].includes(ext)) {
-        return serveInterstitial(id, ext, url)
+      // Selain itu (browser buka tab baru / share link) → HTML interstitial
+      if (!isMediaElement) {
+        return serveInterstitial(id, ext, url, env)
       }
 
-      // Selain itu → stream dari R2
       return serveFromR2(env, key, request, ext)
     }
 
@@ -210,12 +209,14 @@ async function serveFromR2(env, key, request, ext) {
       mp4: 'video/mp4',
       webm: 'video/webm',
       mov: 'video/quicktime',
+      m4v: 'video/mp4',
       jpg: 'image/jpeg',
       jpeg: 'image/jpeg',
       png: 'image/png',
       gif: 'image/gif',
       webp: 'image/webp',
       avif: 'image/avif',
+      bmp: 'image/bmp',
     }
     headers.set('Content-Type', mime[ext] || 'application/octet-stream')
   }
@@ -248,9 +249,20 @@ async function serveFromR2(env, key, request, ext) {
 /* ============================================================
    INTERSTITIAL HTML
    ============================================================ */
-function serveInterstitial(id, ext, url) {
-  const isVideo = ['mp4', 'webm', 'mov'].includes(ext)
-  const contentUrl = `${url.origin}/${id}.${ext}`
+async function serveInterstitial(id, ext, url, env) {
+  const isVideo = ['mp4', 'webm', 'mov', 'm4v'].includes(ext)
+  const contentUrl = `${url.origin}/${id}.${ext}?raw=1`
+  // Cari frame/poster di R2: id.jpg / id.jpeg / id.webp / id.png
+  let posterUrl = ''
+  if (isVideo && env && env.R2_BUCKET) {
+    for (const pExt of ['jpg', 'jpeg', 'webp', 'png']) {
+      const head = await env.R2_BUCKET.head(`${id}.${pExt}`)
+      if (head) {
+        posterUrl = `${url.origin}/${id}.${pExt}?raw=1`
+        break
+      }
+    }
+  }
 
   const adTextsEn = [
     'Click here to unlock more',
@@ -286,7 +298,7 @@ function serveInterstitial(id, ext, url) {
   <div id="content" class="min-h-screen flex-col items-center justify-center bg-neutral-950 flex">
     <div class="flex w-full max-w-[720px] flex-col">
       ${isVideo
-        ? `<video id="video-el" class="max-h-[calc(100vh-100px)] w-full rounded" controls autoplay playsinline src="${contentUrl}"></video>`
+        ? `<video id="video-el" class="max-h-[calc(100vh-100px)] w-full rounded" controls autoplay playsinline ${posterUrl ? `poster="${posterUrl}"` : ''} src="${contentUrl}"></video>`
         : `<img id="img-el" alt="" class="max-h-[calc(100vh-100px)] w-full rounded object-contain" src="${contentUrl}">`
       }
       <div class="text-center mt-2">
@@ -316,6 +328,9 @@ function serveInterstitial(id, ext, url) {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=60',
       'Access-Control-Allow-Origin': '*',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'X-Frame-Options': 'SAMEORIGIN',
     },
   })
 }

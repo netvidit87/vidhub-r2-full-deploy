@@ -1,7 +1,20 @@
+import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Header from '../components/Header'
 
 export default function NotFound() {
+  useEffect(() => {
+    document.title = '404 - Vidhub'
+    // noindex untuk path sampah / bot
+    let robots = document.querySelector('meta[name="robots"]')
+    if (!robots) {
+      robots = document.createElement('meta')
+      robots.setAttribute('name', 'robots')
+      document.head.appendChild(robots)
+    }
+    robots.setAttribute('content', 'noindex, nofollow')
+  }, [])
+
   return (
     <div className="min-h-screen flex flex-col bg-white">
       <Header />

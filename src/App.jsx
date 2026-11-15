@@ -5,10 +5,12 @@ import Terms from './pages/Terms'
 import Privacy from './pages/Privacy'
 import Report from './pages/Report'
 import NotFound from './pages/NotFound'
+import Analytics from './Analytics'
 
 export default function App() {
   return (
     <BrowserRouter>
+      <Analytics />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/v/:id" element={<VideoPlayer />} />

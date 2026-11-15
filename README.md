@@ -1,92 +1,73 @@
 # Vidhub
 
-Free and simple video hosting (React + Vite + Cloudflare Pages + R2).
+Free and simple video hosting — React + Vite + Cloudflare Pages + R2.
 
 ## Fitur
 
-- Upload video langsung ke **R2 bucket** sendiri (via Worker)
-- Video src otomatis: `https://cdn.vidhub.sbs/<id>.mp4`
-- **Interstitial HTML** di CDN (ketika dibuka langsung di browser) + iklan
-- **Iklan di halaman /v/** load dari API sendiri (`/api/ad_type`)
-- Support Range request (seek video)
+- Upload video → R2 bucket sendiri
+- Video URL: `https://cdn.vidhub.sbs/<id>.mp4` (HTML interstitial + smartlink)
+- Halaman player: `https://vidhub.sbs/v/?id=<id>`
+- Iklan `/v/`: 3 script, random 1 atau 2 per view
+- Iklan CDN: smartlink asiaso.org
+- GA hanya track path yang sah (filter bot/spam path)
+- robots.txt + security headers
 
-## Struktur
+## Deploy (step by step)
 
-```
-├── functions/api/
-│   ├── ad_type.js      → Ads API (hanya dipakai di halaman /v/)
-│   └── upload.js       → Proxy upload ke Worker CDN → R2
-├── src/
-│   ├── config.js       → CDN base = https://cdn.vidhub.sbs
-│   └── pages/
-│       └── VideoPlayer.jsx  → title tetap "Vidhub - Free and Simple Video Hosting"
-├── worker/
-│   ├── video-proxy.js  → Worker CDN + R2 + interstitial
-│   └── wrangler.toml   → binding R2_BUCKET = vidrush
-└── public/
-```
+### A. Worker CDN (R2)
 
-## Deploy Step-by-step
-
-### 1. Binding R2 ke Worker (wajib)
-
-1. Cloudflare Dashboard → **Workers & Pages** → **vidrush-cdn**
-2. **Settings** → **Bindings** → **Add** → **R2 bucket**
-3. Variable name: `R2_BUCKET`
-4. R2 bucket: pilih **vidrush**
-5. Save
-
-### 2. Deploy Worker CDN
-
+1. Pastikan binding di dashboard:
+   - Worker `vidrush-cdn` → Settings → Bindings
+   - `R2_BUCKET` → bucket `vidrush`
+2. Domain custom: `cdn.vidhub.sbs` → worker ini
+3. Deploy:
 ```bash
 cd worker
 npx wrangler deploy
 ```
 
-Pastikan custom domain **cdn.vidhub.sbs** sudah terpasang di worker ini.
+### B. Pages (frontend)
 
-### 3. Deploy Pages (frontend + functions)
-
+1. Push isi project ke GitHub repo yang sudah connected
+   (atau upload file ke repo `vidhub-r2-full-deploy`)
+2. Atau manual:
 ```bash
 npm install
 npm run build
-npx wrangler pages deploy dist --project-name=vidhub
+npx wrangler pages deploy dist --project-name=vidrush-ads-api-random
 ```
+3. Domain: `vidhub.sbs` → Pages project
 
-Atau pakai project name yang sudah ada (sesuaikan).
+### C. Cek setelah deploy
 
-### 4. Domain
+| Tes | Hasil yang diharapkan |
+|-----|------------------------|
+| `cdn.vidhub.sbs/api/list` | 404 |
+| `cdn.vidhub.sbs/api/list?key=VIDHUB_SECRET_2026` | list file |
+| `cdn.vidhub.sbs/<id>.mp4` | HTML + video + smartlink |
+| `vidhub.sbs/v/?id=<id>` | player + iklan API |
+| Title tab `/v/` | `Vidhub - Free and Simple Video Hosting` |
+| Path aneh di GA | tidak bertambah (difilter) |
 
-- Frontend: `vidhub.sbs` (atau yang kamu pakai) → Pages
-- CDN: `cdn.vidhub.sbs` → Worker `vidrush-cdn`
+## GA spam path
 
-## Cara kerja
+Path seperti `/aesure`, `/alpinvest`, `/di dalam/` biasanya bot.
+App hanya mengirim pageview untuk:
 
-| Request | Hasil |
-|---------|-------|
-| Browser buka `cdn.vidhub.sbs/xxxx.mp4` | HTML interstitial + iklan |
-| `<video src="cdn.vidhub.sbs/xxxx.mp4">` | Stream video dari R2 (Range) |
-| POST `/api/upload` (Pages) | Proxy ke Worker → simpan R2 |
-| GET `/api/ad_type` | Iklan untuk halaman /v/ |
+- `/`
+- `/v` dan `/v/?id=...` / `/v/:id`
+- `/terms`, `/privacy`, `/report`, `/upload`
 
-## Title untuk Google Analytics
+Di Google Analytics bisa tambah filter View (opsional):
+Admin → Data Filters → Exclude traffic from known bots.
 
-Di halaman `/v/:id` title **selalu**:
+## Struktur
+
 ```
-Vidhub - Free and Simple Video Hosting
-```
-(tidak berubah berdasarkan ID video)
-
-## Iklan
-
-- **CDN interstitial** (`cdn.vidhub.sbs`):  
-  `https://asiaso.org/4/df50998274e1f40d49267336947b0d81`
-
-- **Halaman /v/**: tetap dari `/api/ad_type` (popunder + banner)
-
-## Local dev
-
-```bash
-npm install
-npm run dev
+functions/api/ad_type.js   → iklan 1-2 dari 3 script
+functions/api/upload.js    → proxy upload ke Worker → R2
+worker/video-proxy.js      → CDN + R2 + interstitial
+src/Analytics.jsx          → filter path GA
+public/robots.txt
+public/_headers
 ```
