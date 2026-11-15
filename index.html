@@ -10,14 +10,14 @@
   <body data-version="v1.0.7">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-    <!-- Google tag (gtag.js) - pageview dikirim manual dari App (hanya path sah) -->
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "9e66879a105048c4b14cf3ef4e5626ed"}'></script><!-- End Cloudflare Web Analytics -->
+  </body>
+    <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-1C81BZTY3P"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-      // Jangan auto pageview — Analytics.jsx yang mengirim (filter path aneh)
       gtag('config', 'G-1C81BZTY3P', { send_page_view: false });
     </script>
-  </body>
 </html>
