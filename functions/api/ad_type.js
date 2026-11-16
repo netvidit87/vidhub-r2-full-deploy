@@ -1,7 +1,7 @@
 /**
  * GET /api/ad_type
  * Hanya 3 iklan yang dikonfigurasi.
- * Setiap request: kadang 1 iklan, kadang 2 iklan (acak).
+ * Setiap request: selalu menampilkan tepat 1 iklan secara acak.
  */
 
 const AD1 = `<script data-cfasync="false" src="https://ahuramazda.org/1/d4b3da13003ae6d27d4378a79cb4332d"></script>`
@@ -33,12 +33,9 @@ function corsHeaders() {
 }
 
 function pickAds() {
-  // 50% chance: 1 iklan, 50% chance: 2 iklan
-  const count = Math.random() < 0.5 ? 1 : 2
-
-  // acak urutan tanpa duplikat
-  const shuffled = [...ALL_ADS].sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, count).join('\n')
+  // Selalu memilih tepat 1 iklan secara acak dari ALL_ADS
+  const randomIndex = Math.floor(Math.random() * ALL_ADS.length);
+  return ALL_ADS[randomIndex];
 }
 
 export async function onRequestOptions() {
